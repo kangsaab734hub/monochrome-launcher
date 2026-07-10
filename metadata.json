@@ -1,0 +1,6 @@
+{
+  "name": "Monochrome Launcher",
+  "description": "A highly-optimized, buttery smooth 120 FPS Android Launcher with a premium CMF/Nothing OS monochrome aesthetic, live transparency glassmorphism, and instant search.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
