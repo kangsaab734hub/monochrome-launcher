@@ -34,6 +34,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _apps = MutableStateFlow<List<LauncherApp>>(emptyList())
     val apps: StateFlow<List<LauncherApp>> = _apps.asStateFlow()
 
+    private val _homeGridApps = MutableStateFlow<List<LauncherApp?>>(List(30) { null })
+    val homeGridApps: StateFlow<List<LauncherApp?>> = _homeGridApps.asStateFlow()
+
+    private val _dockApps = MutableStateFlow<List<LauncherApp>>(emptyList())
+    val dockApps: StateFlow<List<LauncherApp>> = _dockApps.asStateFlow()
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
@@ -72,6 +78,103 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 fetchInstalledAndMockApps()
             }
             _apps.value = appList
+            initializeHomeAndDock(appList)
+        }
+    }
+
+    private fun initializeHomeAndDock(appList: List<LauncherApp>) {
+        val grid = MutableList<LauncherApp?>(30) { null }
+        val dock = mutableListOf<LauncherApp>()
+
+        // 1. Populate Fixed Dock (5 Slots)
+        val defaultDockPackages = listOf(
+            "com.android.dialer",
+            "com.android.messaging",
+            "com.android.chrome",
+            "com.android.camera",
+            "com.android.settings"
+        )
+        for (i in 0..4) {
+            val savedPkg = sharedPrefs.getString("dock_slot_$i", null)
+            val app = if (savedPkg != null) {
+                appList.find { it.packageName == savedPkg }
+            } else {
+                val targetPkg = defaultDockPackages.getOrNull(i) ?: ""
+                appList.find { it.packageName == targetPkg } ?: appList.find { it.packageName.contains(targetPkg.substringAfterLast(".")) }
+            }
+            if (app != null) {
+                dock.add(app)
+            } else {
+                // fallback to any app not already in dock
+                val fallback = appList.find { item -> !dock.any { it.packageName == item.packageName } }
+                if (fallback != null) {
+                    dock.add(fallback)
+                }
+            }
+        }
+        _dockApps.value = dock
+
+        // 2. Populate 5x6 Home Grid (30 Slots)
+        val defaultGridPlacements = mapOf(
+            1 to "com.nothing.weather",
+            3 to "com.nothing.recorder",
+            11 to "com.google.android.youtube",
+            13 to "com.google.android.apps.maps",
+            17 to "com.google.android.gm",
+            21 to "com.nothing.settings",
+            23 to "com.android.vending"
+        )
+        for (i in 0..29) {
+            val savedPkg = sharedPrefs.getString("grid_slot_$i", null)
+            if (savedPkg == "empty") {
+                grid[i] = null
+            } else if (savedPkg != null) {
+                grid[i] = appList.find { it.packageName == savedPkg }
+            } else {
+                // default first-run placement
+                val targetPkg = defaultGridPlacements[i]
+                if (targetPkg != null) {
+                    grid[i] = appList.find { it.packageName == targetPkg }
+                }
+            }
+        }
+        _homeGridApps.value = grid
+    }
+
+    fun addAppToGrid(slotIndex: Int, app: LauncherApp) {
+        if (slotIndex in 0..29) {
+            val newList = _homeGridApps.value.toMutableList()
+            newList[slotIndex] = app
+            _homeGridApps.value = newList
+            sharedPrefs.edit().putString("grid_slot_$slotIndex", app.packageName).apply()
+        }
+    }
+
+    fun removeAppFromGrid(slotIndex: Int) {
+        if (slotIndex in 0..29) {
+            val newList = _homeGridApps.value.toMutableList()
+            newList[slotIndex] = null
+            _homeGridApps.value = newList
+            sharedPrefs.edit().putString("grid_slot_$slotIndex", "empty").apply()
+        }
+    }
+
+    fun addAppToFirstAvailableSlot(app: LauncherApp): Boolean {
+        val currentGrid = _homeGridApps.value
+        val emptyIndex = currentGrid.indexOfFirst { it == null }
+        if (emptyIndex != -1) {
+            addAppToGrid(emptyIndex, app)
+            return true
+        }
+        return false
+    }
+
+    fun updateDockApp(slotIndex: Int, app: LauncherApp) {
+        if (slotIndex in 0..4) {
+            val newList = _dockApps.value.toMutableList()
+            newList[slotIndex] = app
+            _dockApps.value = newList
+            sharedPrefs.edit().putString("dock_slot_$slotIndex", app.packageName).apply()
         }
     }
 

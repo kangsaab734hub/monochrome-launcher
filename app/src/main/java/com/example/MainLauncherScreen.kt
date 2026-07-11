@@ -20,6 +20,9 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -107,6 +110,7 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MainLauncherScreen(viewModel: LauncherViewModel) {
     val context = LocalContext.current
@@ -118,6 +122,15 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
     val transparency by viewModel.drawerTransparency.collectAsState()
     val selectedWallpaper by viewModel.selectedWallpaper.collectAsState()
     val fpsValue by viewModel.fpsValue.collectAsState()
+
+    val homeGridApps by viewModel.homeGridApps.collectAsState()
+    val dockApps by viewModel.dockApps.collectAsState()
+
+    var currentWorkspacePage by remember { mutableStateOf(0) }
+    var longPressedApp by remember { mutableStateOf<LauncherApp?>(null) }
+    var longPressedGridSlot by remember { mutableStateOf<Int?>(null) } // 0..29 for grid, -1..-5 for dock
+    var isWorkspaceLongPressed by remember { mutableStateOf(false) }
+    var isAddAppDialogOpen by remember { mutableStateOf(false) }
 
     var isSettingsOpen by remember { mutableStateOf(false) }
     var expandedFolderCategory by remember { mutableStateOf<String?>(null) }
@@ -284,108 +297,312 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // Grid structure featuring Nothing-style larger folders & core apps
-            Column(
+            // Page Selector / Headers (Grid / Folder)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "APP GRID",
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    color = if (currentWorkspacePage == 0) CmfWhite else CmfCoolGray,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier
+                        .clickable { currentWorkspacePage = 0 }
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .size(4.dp)
+                        .clip(CircleShape)
+                        .background(CmfCoolGray.copy(alpha = 0.5f))
+                )
+                Text(
+                    text = "FOLDER MATRIX",
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    color = if (currentWorkspacePage == 1) CmfWhite else CmfCoolGray,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier
+                        .clickable { currentWorkspacePage = 1 }
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Main Content Area (either 5x6 Grid or Folders)
+            Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    .padding(horizontal = 16.dp)
+                    // Detect long press on empty space of the screen background
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onLongPress = {
+                                isWorkspaceLongPressed = true
+                            }
+                        )
+                    }
             ) {
-                Text(
-                    text = "HOME MATRIX",
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = CmfCoolGray,
-                    letterSpacing = 2.sp,
-                    modifier = Modifier.padding(start = 8.dp)
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    // Google Apps Large Folder (Nothing style 2x2 style container)
-                    LargeFolderCard(
-                        title = "GOOGLE",
-                        apps = apps.filter { it.category == "Google" }.take(4),
-                        onAppClick = { viewModel.launchApp(context, it) },
-                        onFolderClick = { expandedFolderCategory = "Google" },
+                if (currentWorkspacePage == 0) {
+                    // Page 0: Modern 5x6 App Grid
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(5),
                         modifier = Modifier
-                            .weight(1f)
-                            .testTag("folder_google")
-                    )
-
-                    // Tools Large Folder
-                    LargeFolderCard(
-                        title = "TOOLS",
-                        apps = apps.filter { it.category == "Tools" }.take(4),
-                        onAppClick = { viewModel.launchApp(context, it) },
-                        onFolderClick = { expandedFolderCategory = "Tools" },
+                            .fillMaxSize()
+                            .testTag("home_5x6_grid"),
+                        contentPadding = PaddingValues(vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(30) { index ->
+                            val app = homeGridApps.getOrNull(index)
+                            Box(
+                                modifier = Modifier
+                                    .height(76.dp)
+                                    .testTag("grid_slot_$index"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (app != null) {
+                                    // Custom combinedClickable for tap and long tap
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .combinedClickable(
+                                                onClick = { viewModel.launchApp(context, app) },
+                                                onLongClick = {
+                                                    longPressedApp = app
+                                                    longPressedGridSlot = index
+                                                }
+                                            ),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(46.dp)
+                                                .clip(CircleShape)
+                                                .background(CmfCharcoal.copy(alpha = 0.8f))
+                                                .border(1.2.dp, CmfCoolGray.copy(alpha = 0.25f), CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (app.icon != null) {
+                                                AndroidIconWrapper(drawable = app.icon, modifier = Modifier.size(28.dp))
+                                            } else {
+                                                Text(
+                                                    text = app.label.take(1).uppercase(),
+                                                    fontSize = 18.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = CmfWhite
+                                                )
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = app.label.uppercase(),
+                                            fontSize = 9.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = CmfWhite,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            textAlign = TextAlign.Center,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                } else {
+                                    // Empty slot CMF point grid indicator (dot)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(46.dp)
+                                            .combinedClickable(
+                                                onClick = {
+                                                    longPressedGridSlot = index
+                                                    isAddAppDialogOpen = true
+                                                },
+                                                onLongClick = {
+                                                    longPressedGridSlot = index
+                                                    isWorkspaceLongPressed = true
+                                                }
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(CmfCoolGray.copy(alpha = 0.35f))
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Page 1: Original Folder Matrix Cards (preserved exactly!)
+                    Column(
                         modifier = Modifier
-                            .weight(1f)
-                            .testTag("folder_tools")
-                    )
+                            .fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            LargeFolderCard(
+                                title = "GOOGLE",
+                                apps = apps.filter { it.category == "Google" }.take(4),
+                                onAppClick = { viewModel.launchApp(context, it) },
+                                onFolderClick = { expandedFolderCategory = "Google" },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("folder_google")
+                            )
+
+                            LargeFolderCard(
+                                title = "TOOLS",
+                                apps = apps.filter { it.category == "Tools" }.take(4),
+                                onAppClick = { viewModel.launchApp(context, it) },
+                                onFolderClick = { expandedFolderCategory = "Tools" },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("folder_tools")
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            LargeFolderCard(
+                                title = "MEDIA",
+                                apps = apps.filter { it.category == "Media" }.take(4),
+                                onAppClick = { viewModel.launchApp(context, it) },
+                                onFolderClick = { expandedFolderCategory = "Media" },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("folder_media")
+                            )
+
+                            LargeFolderCard(
+                                title = "SYSTEM",
+                                apps = apps.filter { it.category == "System" }.take(4),
+                                onAppClick = { viewModel.launchApp(context, it) },
+                                onFolderClick = { expandedFolderCategory = "System" },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("folder_system")
+                            )
+                        }
+                    }
                 }
+            }
 
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // FIXED DOCK (5 Apps) - Always visible on home screen!
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .border(1.2.dp, CmfWhite.copy(alpha = 0.12f), RoundedCornerShape(24.dp))
+                    .testTag("fixed_dock"),
+                colors = CardDefaults.cardColors(containerColor = CmfCharcoal.copy(alpha = 0.45f)),
+                shape = RoundedCornerShape(24.dp)
+            ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    // Media / Entertainment Large Folder
-                    LargeFolderCard(
-                        title = "MEDIA",
-                        apps = apps.filter { it.category == "Media" }.take(4),
-                        onAppClick = { viewModel.launchApp(context, it) },
-                        onFolderClick = { expandedFolderCategory = "Media" },
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("folder_media")
-                    )
-
-                    // System Large Folder
-                    LargeFolderCard(
-                        title = "SYSTEM",
-                        apps = apps.filter { it.category == "System" }.take(4),
-                        onAppClick = { viewModel.launchApp(context, it) },
-                        onFolderClick = { expandedFolderCategory = "System" },
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("folder_system")
-                    )
-                }
-
-                Spacer(modifier = Modifier.weight(1f))
-
-                // Swipe-up gesture pill indicator for App Drawer
-                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
+                        .padding(vertical = 12.dp, horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    dockApps.take(5).forEachIndexed { index, app ->
+                        Box(
+                            modifier = Modifier
+                                .size(50.dp)
+                                .clip(CircleShape)
+                                .background(CmfBlack.copy(alpha = 0.5f))
+                                .border(1.dp, CmfCoolGray.copy(alpha = 0.15f), CircleShape)
+                                .combinedClickable(
+                                    onClick = { viewModel.launchApp(context, app) },
+                                    onLongClick = {
+                                        longPressedApp = app
+                                        longPressedGridSlot = -1 - index // negative indices represent dock positions
+                                    }
+                                ),
+                            contentAlignment = Alignment.Center
                         ) {
-                            // Instant smooth click to open app drawer
-                        },
-                    horizontalAlignment = Alignment.CenterHorizontally
+                            if (app.icon != null) {
+                                AndroidIconWrapper(drawable = app.icon, modifier = Modifier.size(30.dp))
+                            } else {
+                                Text(
+                                    text = app.label.take(1).uppercase(),
+                                    fontSize = 18.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = CmfWhite
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Swipe-up gesture pill indicator for App Drawer (and page dots above it)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Page Dots Indicator
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(width = 40.dp, height = 4.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(CmfWhite.copy(alpha = 0.5f))
+                            .size(if (currentWorkspacePage == 0) 6.dp else 4.dp)
+                            .clip(CircleShape)
+                            .background(if (currentWorkspacePage == 0) CmfWhite else CmfCoolGray.copy(alpha = 0.5f))
+                            .clickable { currentWorkspacePage = 0 }
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "SWIPE UP TO SEARCH",
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = CmfWhite.copy(alpha = 0.6f),
-                        letterSpacing = 1.5.sp
+                    Box(
+                        modifier = Modifier
+                            .size(if (currentWorkspacePage == 1) 6.dp else 4.dp)
+                            .clip(CircleShape)
+                            .background(if (currentWorkspacePage == 1) CmfWhite else CmfCoolGray.copy(alpha = 0.5f))
+                            .clickable { currentWorkspacePage = 1 }
                     )
                 }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Box(
+                    modifier = Modifier
+                        .size(width = 40.dp, height = 4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(CmfWhite.copy(alpha = 0.5f))
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "SWIPE UP TO SEARCH",
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = CmfWhite.copy(alpha = 0.6f),
+                    letterSpacing = 1.5.sp
+                )
             }
         }
 
@@ -973,6 +1190,422 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
                                     fontWeight = FontWeight.Bold,
                                     color = CmfWhite
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- WORKSPACE & APP SHORTCUT POPUPS ---
+
+            if (isWorkspaceLongPressed) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(CmfBlack.copy(alpha = 0.8f))
+                        .clickable { isWorkspaceLongPressed = false },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth(0.85f)
+                            .border(1.5.dp, CmfWhite.copy(alpha = 0.15f), RoundedCornerShape(24.dp))
+                            .clickable(enabled = false) {},
+                        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.9f)),
+                        shape = RoundedCornerShape(24.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            DotMatrixText(
+                                text = "DESKTOP",
+                                dotColor = CmfWhite,
+                                dotSize = 3.5.dp,
+                                spacing = 1.2.dp,
+                                charSpacing = 5.dp
+                            )
+                            Spacer(modifier = Modifier.height(20.dp))
+                            
+                            // Option 1: Change Wallpaper
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(CmfCharcoal.copy(alpha = 0.8f))
+                                    .border(1.dp, CmfCoolGray.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        val nextWallpaper = (selectedWallpaper + 1) % 3
+                                        viewModel.setSelectedWallpaper(nextWallpaper)
+                                        isWorkspaceLongPressed = false
+                                    }
+                                    .padding(horizontal = 16.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Text(
+                                    text = "CYCLE CMF WALLPAPER",
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = CmfWhite
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.height(10.dp))
+                            
+                            // Option 2: Launcher Settings
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(CmfCharcoal.copy(alpha = 0.8f))
+                                    .border(1.dp, CmfCoolGray.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        isWorkspaceLongPressed = false
+                                        isSettingsOpen = true
+                                    }
+                                    .padding(horizontal = 16.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Text(
+                                    text = "LAUNCHER SETTINGS",
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = CmfWhite
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+                            
+                            // Option 3: Add app
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(CmfCharcoal.copy(alpha = 0.8f))
+                                    .border(1.dp, CmfCoolGray.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        isWorkspaceLongPressed = false
+                                        isAddAppDialogOpen = true
+                                    }
+                                    .padding(horizontal = 16.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Text(
+                                    text = "ADD APP TO GRID",
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = CmfWhite
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(20.dp))
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(CmfWhite)
+                                    .clickable { isWorkspaceLongPressed = false },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "CLOSE",
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = CmfBlack
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (longPressedApp != null) {
+                val app = longPressedApp!!
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(CmfBlack.copy(alpha = 0.8f))
+                        .clickable { longPressedApp = null },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth(0.85f)
+                            .border(1.5.dp, CmfWhite.copy(alpha = 0.15f), RoundedCornerShape(24.dp))
+                            .clickable(enabled = false) {},
+                        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.9f)),
+                        shape = RoundedCornerShape(24.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(CircleShape)
+                                        .background(CmfCharcoal),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (app.icon != null) {
+                                        AndroidIconWrapper(drawable = app.icon, modifier = Modifier.size(24.dp))
+                                    } else {
+                                        Text(
+                                            text = app.label.take(1).uppercase(),
+                                            fontSize = 16.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            color = CmfWhite
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        text = app.label.uppercase(),
+                                        fontSize = 14.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = CmfWhite
+                                    )
+                                    Text(
+                                        text = app.category.uppercase(),
+                                        fontSize = 9.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = CmfCoolGray
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(20.dp))
+                            
+                            // Option 1: Launch App
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(44.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(CmfCharcoal.copy(alpha = 0.8f))
+                                    .border(1.dp, CmfCoolGray.copy(alpha = 0.15f), RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        viewModel.launchApp(context, app)
+                                        longPressedApp = null
+                                    }
+                                    .padding(horizontal = 16.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Text(
+                                    text = "LAUNCH APPLICATION",
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = CmfWhite
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.height(10.dp))
+                            
+                            // Option 2: Remove from Home Screen
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(44.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(CmfCharcoal.copy(alpha = 0.8f))
+                                    .border(1.dp, CmfCoolGray.copy(alpha = 0.15f), RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        val slot = longPressedGridSlot
+                                        if (slot != null) {
+                                            if (slot >= 0) {
+                                                viewModel.removeAppFromGrid(slot)
+                                            } else {
+                                                android.widget.Toast.makeText(context, "Dock apps are permanent but interchangeable!", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                        longPressedApp = null
+                                    }
+                                    .padding(horizontal = 16.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Text(
+                                    text = "REMOVE FROM HOME SCREEN",
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = CmfRed
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+                            
+                            // Option 3: App Details
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(44.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(CmfCharcoal.copy(alpha = 0.8f))
+                                    .border(1.dp, CmfCoolGray.copy(alpha = 0.15f), RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        android.widget.Toast.makeText(context, "Pkg: ${app.packageName}\nClass: ${app.className}\nisMock: ${app.isMock}", android.widget.Toast.LENGTH_LONG).show()
+                                        longPressedApp = null
+                                    }
+                                    .padding(horizontal = 16.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Text(
+                                    text = "APP DETAILS & METADATA",
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = CmfWhite
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(20.dp))
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(CmfWhite)
+                                    .clickable { longPressedApp = null },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "CLOSE",
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = CmfBlack
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (isAddAppDialogOpen) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(CmfBlack.copy(alpha = 0.85f))
+                        .clickable { isAddAppDialogOpen = false },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth(0.9f)
+                            .fillMaxHeight(0.7f)
+                            .border(1.5.dp, CmfWhite.copy(alpha = 0.15f), RoundedCornerShape(24.dp))
+                            .clickable(enabled = false) {},
+                        colors = CardDefaults.cardColors(containerColor = CmfDarkGray),
+                        shape = RoundedCornerShape(24.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(20.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "SELECT APP TO ADD",
+                                    fontSize = 14.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = CmfWhite
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(CmfWhite.copy(alpha = 0.08f))
+                                        .clickable { isAddAppDialogOpen = false },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Clear,
+                                        contentDescription = "Close",
+                                        tint = CmfWhite,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(4),
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(apps) { app ->
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                val targetSlot = longPressedGridSlot ?: viewModel.homeGridApps.value.indexOfFirst { it == null }
+                                                if (targetSlot in 0..29) {
+                                                    viewModel.addAppToGrid(targetSlot, app)
+                                                }
+                                                isAddAppDialogOpen = false
+                                                longPressedGridSlot = null
+                                            },
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(44.dp)
+                                                .clip(CircleShape)
+                                                .background(CmfCharcoal.copy(alpha = 0.8f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (app.icon != null) {
+                                                AndroidIconWrapper(drawable = app.icon, modifier = Modifier.size(24.dp))
+                                            } else {
+                                                Text(
+                                                    text = app.label.take(1).uppercase(),
+                                                    fontSize = 14.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    color = CmfWhite
+                                                )
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = app.label,
+                                            fontSize = 9.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = CmfWhite,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
