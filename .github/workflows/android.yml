@@ -20,7 +20,10 @@ jobs:
         cache: gradle
 
     - name: Copy env config
-      run: cp .env.example .env
+      run: |
+        if [ -f .env.example ]; then
+          cp .env.example .env
+        fi
 
     - name: Restore Debug Keystore
       run: |
