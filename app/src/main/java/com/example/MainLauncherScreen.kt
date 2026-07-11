@@ -86,6 +86,20 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -123,6 +137,13 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
     val selectedWallpaper by viewModel.selectedWallpaper.collectAsState()
     val fpsValue by viewModel.fpsValue.collectAsState()
 
+    val blurStrength by viewModel.blurStrength.collectAsState()
+    val animationSpeed by viewModel.drawerAnimationSpeed.collectAsState()
+    val hiddenApps by viewModel.hiddenApps.collectAsState()
+    val hiddenSpacePin by viewModel.hiddenSpacePin.collectAsState()
+    val useDeviceAuth by viewModel.useDeviceAuth.collectAsState()
+    val isHiddenSpaceUnlocked by viewModel.isHiddenSpaceUnlocked.collectAsState()
+
     val homeGridApps by viewModel.homeGridApps.collectAsState()
     val dockApps by viewModel.dockApps.collectAsState()
 
@@ -133,7 +154,10 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
     var isAddAppDialogOpen by remember { mutableStateOf(false) }
 
     var isSettingsOpen by remember { mutableStateOf(false) }
+    var isManageHiddenAppsOpen by remember { mutableStateOf(false) }
+    var isChangePinOpen by remember { mutableStateOf(false) }
     var expandedFolderCategory by remember { mutableStateOf<String?>(null) }
+    var drawerTab by remember { mutableStateOf(0) } // 0 = All Apps, 1 = Hidden Space
 
     // Dynamic clock date state
     var currentTime by remember { mutableStateOf("") }
@@ -606,16 +630,17 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
             }
         }
 
-        // SLIDING FROSTED GLASS APP DRAWER
-        // Custom vertical drag sheet with Gaussian blur fallback and dynamic real-time transparency slider link
+        // SLIDING FROSTED GLASS APP DRAWER WITH ADJUSTABLE REAL-TIME BLUR
         var drawerDragOffset by remember { mutableStateOf(0f) }
         var isDrawerOpen by remember { mutableStateOf(false) }
+        var horizontalDragOffset by remember { mutableStateOf(0f) }
 
+        // Use the custom duration animation speed instantly from settings
         val animatedFraction by animateFloatAsState(
             targetValue = if (isDrawerOpen) 0f else 1f,
-            animationSpec = spring(
-                dampingRatio = Spring.DampingRatioNoBouncy,
-                stiffness = Spring.StiffnessMediumLow
+            animationSpec = tween(
+                durationMillis = animationSpeed,
+                easing = FastOutSlowInEasing
             ),
             label = "DrawerSlide"
         )
@@ -623,10 +648,11 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
         val finalFraction = if (isDrawerOpen) drawerDragOffset else animatedFraction
         val drawerOffsetY = with(density) { (screenHeight * finalFraction).toPx() }
 
-        // Dynamic Glassmorphic properties
+        // Dynamic Glassmorphic properties with instant adjustable blur strength from 0% to 100%
         val alphaLevel = transparency // Slider controlled 0% to 100%
         val glassColor = CmfWhite.copy(alpha = 0.08f + 0.15f * alphaLevel)
-        val glassBlur = if (alphaLevel < 0.95f) 24.dp else 0.dp
+        // Blur calculated using the live settings value instantly
+        val glassBlur = (30.dp * blurStrength)
 
         Box(
             modifier = Modifier
@@ -685,10 +711,28 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
                             colors = listOf(
                                 CmfWhite.copy(alpha = 0.25f * (1f - alphaLevel)),
                                 Color.Transparent
-                            )
+                             )
                         ),
                         shape = RoundedCornerShape(topStart = 40.dp, topEnd = 40.dp)
                     )
+                    .pointerInput(Unit) {
+                        detectHorizontalDragGestures(
+                            onDragEnd = {
+                                if (horizontalDragOffset < -80f) {
+                                    // Swipe left to open Hidden Space
+                                    drawerTab = 1
+                                } else if (horizontalDragOffset > 80f) {
+                                    // Swipe right to return to All Apps
+                                    drawerTab = 0
+                                }
+                                horizontalDragOffset = 0f
+                            },
+                            onHorizontalDrag = { change, dragAmount ->
+                                change.consume()
+                                horizontalDragOffset += dragAmount
+                            }
+                        )
+                    }
                     .testTag("app_drawer_sheet")
             ) {
                 // Tactile glass overlay grids
@@ -709,10 +753,10 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(top = insetsTop + 16.dp, bottom = insetsBottom + 16.dp),
+                        .padding(top = insetsTop + 12.dp, bottom = insetsBottom + 16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // Premium Tactile Drag Handle from Design HTML
+                    // Tactile Drag Handle
                     Box(
                         modifier = Modifier
                             .width(48.dp)
@@ -721,67 +765,517 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
                             .background(CmfWhite.copy(alpha = 0.25f))
                     )
 
-                    Spacer(modifier = Modifier.height(24.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
-                    // Drawer Top bar: Search Input
+                    // Redesigned Top Tabs: ALL APPS & HIDDEN SPACE
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 24.dp),
+                        horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        SearchBar(
-                            query = searchQuery,
-                            onQueryChange = { viewModel.setSearchQuery(it) },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("app_search_input")
-                        )
-
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        // Close button
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(CircleShape)
-                                .background(CmfWhite.copy(alpha = 0.08f))
-                                .clickable {
-                                    isDrawerOpen = false
+                        listOf("ALL APPS", "HIDDEN SPACE").forEachIndexed { index, tabName ->
+                            val isSelected = drawerTab == index
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { drawerTab = index }
+                                    .padding(vertical = 8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (index == 1) {
+                                        Icon(
+                                            imageVector = if (isHiddenSpaceUnlocked) Icons.Default.LockOpen else Icons.Default.Lock,
+                                            contentDescription = null,
+                                            tint = if (isSelected) CmfOrange else CmfCoolGray,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                    }
+                                    Text(
+                                        text = tabName,
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) CmfWhite else CmfCoolGray,
+                                        letterSpacing = 1.sp
+                                    )
                                 }
-                                .testTag("close_drawer_button"),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Clear,
-                                contentDescription = "Close Drawer",
-                                tint = CmfWhite,
-                                modifier = Modifier.size(20.dp)
-                            )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .width(36.dp)
+                                        .height(2.dp)
+                                        .background(if (isSelected) CmfOrange else Color.Transparent)
+                                )
+                            }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
-                    // Main App list grid
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(4),
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                            .testTag("drawer_apps_grid"),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(20.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(filteredApps) { app ->
-                            AppIconItem(
-                                app = app,
-                                onClick = {
-                                    viewModel.launchApp(context, app)
-                                    isDrawerOpen = false
+                    // RENDER SELECTED TAB CONTENT
+                    if (drawerTab == 0) {
+                        // ==========================================
+                        // TAB 0: ALL APPS (ALPHABETICAL APP LIST GRID)
+                        // ==========================================
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 24.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            SearchBar(
+                                query = searchQuery,
+                                onQueryChange = { viewModel.setSearchQuery(it) },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("app_search_input")
+                            )
+
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            // Close button
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .background(CmfWhite.copy(alpha = 0.08f))
+                                    .clickable {
+                                        isDrawerOpen = false
+                                    }
+                                    .testTag("close_drawer_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Clear,
+                                    contentDescription = "Close Drawer",
+                                    tint = CmfWhite,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Fast A-Z Indexing Logic
+                        val gridState = rememberLazyGridState()
+                        val coroutineScope = rememberCoroutineScope()
+
+                        val sortedApps = remember(filteredApps) {
+                            filteredApps.sortedBy { it.label.uppercase() }
+                        }
+
+                        val letterToGridIndex = remember(sortedApps) {
+                            val map = mutableMapOf<Char, Int>()
+                            sortedApps.forEachIndexed { index, app ->
+                                val firstChar = app.label.uppercase().firstOrNull() ?: ' '
+                                if (firstChar in 'A'..'Z' && !map.containsKey(firstChar)) {
+                                    map[firstChar] = index
+                                }
+                            }
+                            map
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                        ) {
+                            // Main Alphabetical App Grid list
+                            LazyVerticalGrid(
+                                state = gridState,
+                                columns = GridCells.Fixed(4),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .testTag("drawer_apps_grid"),
+                                contentPadding = PaddingValues(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(20.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                items(sortedApps) { app ->
+                                    AppIconItem(
+                                        app = app,
+                                        onClick = {
+                                            viewModel.launchApp(context, app)
+                                            isDrawerOpen = false
+                                        }
+                                    )
+                                }
+                            }
+
+                            // Interactive A-Z Fast Scroller on the right side
+                            Column(
+                                modifier = Modifier
+                                    .width(28.dp)
+                                    .fillMaxHeight()
+                                    .padding(end = 6.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.SpaceEvenly
+                            ) {
+                                ('A'..'Z').forEach { letter ->
+                                    val hasApps = letterToGridIndex.containsKey(letter)
+                                    Text(
+                                        text = letter.toString(),
+                                        fontSize = 8.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (hasApps) CmfWhite else CmfCoolGray.copy(alpha = 0.3f),
+                                        modifier = Modifier
+                                            .clip(CircleShape)
+                                            .clickable(enabled = hasApps) {
+                                                val targetIndex = letterToGridIndex[letter]
+                                                if (targetIndex != null) {
+                                                    coroutineScope.launch {
+                                                        gridState.animateScrollToItem(targetIndex)
+                                                    }
+                                                }
+                                            }
+                                            .padding(2.dp)
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        // ==========================================
+                        // TAB 1: HIDDEN SPACE (LOCKED / UNLOCKED)
+                        // ==========================================
+                        if (!isHiddenSpaceUnlocked) {
+                            // PIN LOCKED STATE OVERLAY (Tactile, Dot Matrix)
+                            var enteredPin by remember { mutableStateOf("") }
+                            var isBiometricScanning by remember { mutableStateOf(false) }
+                            var shakeTrigger by remember { mutableStateOf(false) }
+
+                            val shakeOffset by animateDpAsState(
+                                targetValue = if (shakeTrigger) 12.dp else 0.dp,
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioHighBouncy,
+                                    stiffness = Spring.StiffnessMedium
+                                ),
+                                finishedListener = {
+                                    if (shakeTrigger) shakeTrigger = false
                                 }
                             )
+
+                            LaunchedEffect(enteredPin) {
+                                if (enteredPin.length == 4) {
+                                    if (enteredPin == hiddenSpacePin) {
+                                        viewModel.setHiddenSpaceUnlocked(true)
+                                        enteredPin = ""
+                                    } else {
+                                        shakeTrigger = true
+                                        enteredPin = ""
+                                    }
+                                }
+                            }
+
+                            if (isBiometricScanning) {
+                                // Beautiful, futuristic Nothing Biometrics scanning simulation
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(100.dp)
+                                                .border(1.5.dp, CmfWhite.copy(alpha = 0.2f), CircleShape),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Fingerprint,
+                                                contentDescription = null,
+                                                tint = CmfOrange,
+                                                modifier = Modifier.size(48.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(24.dp))
+                                        Text(
+                                            text = "SCANNING FINGERPRINT...",
+                                            fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = CmfWhite,
+                                            letterSpacing = 1.5.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = "SECURE DEVICE ENCLAVE ACTIVE",
+                                            fontSize = 9.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = CmfCoolGray
+                                        )
+                                    }
+                                }
+
+                                LaunchedEffect(Unit) {
+                                    delay(1800) // Simulate scanning
+                                    viewModel.setHiddenSpaceUnlocked(true)
+                                    isBiometricScanning = false
+                                }
+                            } else {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth(),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Lock,
+                                        contentDescription = null,
+                                        tint = CmfWhite,
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        text = "HIDDEN SPACE SECURED",
+                                        fontSize = 12.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = CmfWhite,
+                                        letterSpacing = 1.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = "ENTER 4-DIGIT PIN OR SCAN",
+                                        fontSize = 9.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = CmfCoolGray
+                                    )
+
+                                    Spacer(modifier = Modifier.height(24.dp))
+
+                                    // Passcode feedback circles (with spring offset on error shake)
+                                    Row(
+                                        modifier = Modifier.offset(x = shakeOffset),
+                                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        for (i in 0..3) {
+                                            val isFilled = enteredPin.length > i
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(14.dp)
+                                                    .clip(CircleShape)
+                                                    .background(if (isFilled) CmfOrange else Color.Transparent)
+                                                    .border(
+                                                        1.5.dp,
+                                                        if (isFilled) CmfOrange else CmfWhite.copy(alpha = 0.4f),
+                                                        CircleShape
+                                                    )
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(32.dp))
+
+                                    // Keypad layout
+                                    val keypadKeys = listOf(
+                                        listOf("1", "2", "3"),
+                                        listOf("4", "5", "6"),
+                                        listOf("7", "8", "9"),
+                                        listOf("C", "0", "FP")
+                                    )
+
+                                    Column(
+                                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        keypadKeys.forEach { row ->
+                                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                                row.forEach { key ->
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(60.dp)
+                                                            .clip(CircleShape)
+                                                            .background(CmfCharcoal.copy(alpha = 0.6f))
+                                                            .border(
+                                                                1.dp,
+                                                                CmfWhite.copy(alpha = 0.12f),
+                                                                CircleShape
+                                                            )
+                                                            .clickable {
+                                                                when (key) {
+                                                                    "C" -> {
+                                                                        if (enteredPin.isNotEmpty()) {
+                                                                            enteredPin = enteredPin.dropLast(1)
+                                                                        }
+                                                                    }
+                                                                    "FP" -> {
+                                                                        // Fingerprint simulator
+                                                                        isBiometricScanning = true
+                                                                    }
+                                                                    else -> {
+                                                                        if (enteredPin.length < 4) {
+                                                                            enteredPin += key
+                                                                        }
+                                                                    }
+                                                                }
+                                                            },
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        if (key == "FP") {
+                                                            Icon(
+                                                                imageVector = Icons.Default.Fingerprint,
+                                                                contentDescription = "Scan",
+                                                                tint = CmfOrange,
+                                                                modifier = Modifier.size(22.dp)
+                                                            )
+                                                        } else if (key == "C") {
+                                                            Icon(
+                                                                imageVector = Icons.Default.ArrowBack,
+                                                                contentDescription = "Backspace",
+                                                                tint = CmfWhite,
+                                                                modifier = Modifier.size(20.dp)
+                                                            )
+                                                        } else {
+                                                            Text(
+                                                                text = key,
+                                                                fontSize = 18.sp,
+                                                                fontFamily = FontFamily.Monospace,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = CmfWhite
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // UNLOCKED STATE (Hidden Apps Dashboard)
+                            val hiddenAppsList = remember(apps, hiddenApps) {
+                                apps.filter { hiddenApps.contains(it.packageName) }
+                            }
+
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 24.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "HIDDEN APPLICATIONS",
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = CmfOrange,
+                                        letterSpacing = 1.sp
+                                    )
+
+                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        // Manage / Add apps button
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(CmfWhite.copy(alpha = 0.08f))
+                                                .clickable { isManageHiddenAppsOpen = true }
+                                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                        ) {
+                                            Text(
+                                                text = "MANAGE",
+                                                fontSize = 9.sp,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = FontWeight.Bold,
+                                                color = CmfWhite
+                                            )
+                                        }
+
+                                        // Lock Space button
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(CmfWhite.copy(alpha = 0.08f))
+                                                .clickable { viewModel.setHiddenSpaceUnlocked(false) }
+                                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                                        ) {
+                                            Text(
+                                                text = "LOCK",
+                                                fontSize = 9.sp,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = FontWeight.Bold,
+                                                color = CmfWhite
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(16.dp))
+
+                                if (hiddenAppsList.isEmpty()) {
+                                    // Empty state helper
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxWidth(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(64.dp)
+                                                    .border(1.2.dp, CmfCoolGray.copy(alpha = 0.3f), CircleShape),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.LockOpen,
+                                                    contentDescription = null,
+                                                    tint = CmfCoolGray,
+                                                    modifier = Modifier.size(24.dp)
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.height(16.dp))
+                                            Text(
+                                                text = "NO HIDDEN APPS YET",
+                                                fontSize = 11.sp,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = CmfWhite
+                                            )
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Text(
+                                                text = "TAP MANAGE TO SELECT APPS TO SECURE",
+                                                fontSize = 9.sp,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = CmfCoolGray
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    // List of hidden apps
+                                    LazyVerticalGrid(
+                                        columns = GridCells.Fixed(4),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxWidth(),
+                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(20.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        items(hiddenAppsList) { app ->
+                                            AppIconItem(
+                                                app = app,
+                                                onClick = {
+                                                    viewModel.launchApp(context, app)
+                                                    isDrawerOpen = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -906,6 +1400,7 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth(0.92f)
+                        .fillMaxHeight(0.85f)
                         .border(1.5.dp, CmfWhite.copy(alpha = 0.15f), RoundedCornerShape(32.dp))
                         .clickable(enabled = false) {}, // prevent close inside click
                     colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.85f)),
@@ -913,7 +1408,7 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
                 ) {
                     Column(
                         modifier = Modifier
-                            .fillMaxWidth()
+                            .fillMaxSize()
                             .padding(24.dp)
                     ) {
                         // Settings Header
@@ -949,200 +1444,412 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(24.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
 
-                        // Live Transparency Control
-                        Text(
-                            text = "APP DRAWER TRANSPARENCY",
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = CmfCoolGray,
-                            letterSpacing = 1.sp
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
+                        // Scrollable content body for settings
+                        LazyColumn(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(20.dp)
                         ) {
-                            Text(
-                                text = "GLASS",
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = CmfWhite
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Slider(
-                                value = transparency,
-                                onValueChange = { viewModel.setDrawerTransparency(it) },
-                                valueRange = 0f..1f,
-                                colors = SliderDefaults.colors(
-                                    activeTrackColor = CmfWhite,
-                                    inactiveTrackColor = CmfCharcoal,
-                                    thumbColor = CmfOrange
-                                ),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("drawer_transparency_slider")
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(
-                                text = "${(transparency * 100).toInt()}%",
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = CmfWhite,
-                                modifier = Modifier.width(36.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(24.dp))
-
-                        // Theme & Wallpaper Selector
-                        Text(
-                            text = "SELECT CMF WALLPAPER",
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = CmfCoolGray,
-                            letterSpacing = 1.sp
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            listOf("CARBON MATRIX", "MATTE SLATE", "VAPOR GLOW").forEachIndexed { index, name ->
-                                val isSelected = selectedWallpaper == index
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(if (isSelected) CmfWhite else CmfCharcoal)
-                                        .border(
-                                            1.dp,
-                                            if (isSelected) CmfWhite else CmfCoolGray.copy(alpha = 0.3f),
-                                            RoundedCornerShape(12.dp)
+                            // 1. Transparency Slider
+                            item {
+                                Column {
+                                    Text(
+                                        text = "APP DRAWER TRANSPARENCY",
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = CmfCoolGray,
+                                        letterSpacing = 1.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = "GLASS",
+                                            fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = CmfWhite
                                         )
-                                        .clickable { viewModel.setSelectedWallpaper(index) }
-                                        .padding(vertical = 12.dp, horizontal = 4.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Slider(
+                                            value = transparency,
+                                            onValueChange = { viewModel.setDrawerTransparency(it) },
+                                            valueRange = 0f..1f,
+                                            colors = SliderDefaults.colors(
+                                                activeTrackColor = CmfWhite,
+                                                inactiveTrackColor = CmfCharcoal,
+                                                thumbColor = CmfOrange
+                                            ),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .testTag("drawer_transparency_slider")
+                                        )
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Text(
+                                            text = "${(transparency * 100).toInt()}%",
+                                            fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = CmfWhite,
+                                            modifier = Modifier.width(36.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // 2. Blur Intensity Slider (NEW!)
+                            item {
+                                Column {
                                     Text(
-                                        text = name,
-                                        fontSize = 9.sp,
+                                        text = "BLUR INTENSITY SLIDER",
+                                        fontSize = 11.sp,
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.Bold,
-                                        color = if (isSelected) CmfBlack else CmfWhite,
-                                        textAlign = TextAlign.Center
+                                        color = CmfCoolGray,
+                                        letterSpacing = 1.sp
                                     )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = "BLUR",
+                                            fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = CmfWhite
+                                        )
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Slider(
+                                            value = blurStrength,
+                                            onValueChange = { viewModel.setBlurStrength(it) },
+                                            valueRange = 0f..1f,
+                                            steps = 9, // Snap to 0%, 10%, 20%... 100%
+                                            colors = SliderDefaults.colors(
+                                                activeTrackColor = CmfWhite,
+                                                inactiveTrackColor = CmfCharcoal,
+                                                thumbColor = CmfOrange
+                                            ),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .testTag("blur_intensity_slider")
+                                        )
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Text(
+                                            text = "${(blurStrength * 100).roundToInt()}%",
+                                            fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = CmfWhite,
+                                            modifier = Modifier.width(36.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // 3. Animation Speed Segment Selector (NEW!)
+                            item {
+                                Column {
+                                    Text(
+                                        text = "DRAWER ANIMATION SPEED",
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = CmfCoolGray,
+                                        letterSpacing = 1.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        val options = listOf(
+                                            150 to "FAST",
+                                            300 to "NORMAL",
+                                            500 to "EASED"
+                                        )
+                                        options.forEach { (speed, label) ->
+                                            val isSelected = animationSpeed == speed
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .background(if (isSelected) CmfWhite else CmfCharcoal)
+                                                    .border(
+                                                        1.dp,
+                                                        if (isSelected) CmfWhite else CmfCoolGray.copy(alpha = 0.2f),
+                                                        RoundedCornerShape(12.dp)
+                                                    )
+                                                    .clickable { viewModel.setDrawerAnimationSpeed(speed) }
+                                                    .padding(vertical = 10.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = label,
+                                                    fontSize = 10.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (isSelected) CmfBlack else CmfWhite
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 4. Secure Hidden Space settings
+                            item {
+                                Column {
+                                    Text(
+                                        text = "HIDDEN SPACE PROTECTION",
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = CmfCoolGray,
+                                        letterSpacing = 1.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(10.dp))
+
+                                    // Row to toggle Biometric authentication
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(CmfCharcoal.copy(alpha = 0.5f))
+                                            .clickable { viewModel.setUseDeviceAuth(!useDeviceAuth) }
+                                            .padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = Icons.Default.Lock,
+                                                contentDescription = null,
+                                                tint = CmfOrange,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            Text(
+                                                text = "PRIORITIZE BIOMETRIC LOCK",
+                                                fontSize = 10.sp,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = CmfWhite
+                                            )
+                                        }
+                                        Checkbox(
+                                            checked = useDeviceAuth,
+                                            onCheckedChange = { viewModel.setUseDeviceAuth(it) },
+                                            colors = CheckboxDefaults.colors(
+                                                checkedColor = CmfOrange,
+                                                uncheckedColor = CmfCoolGray
+                                            ),
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.height(10.dp))
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        // Change custom PIN
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(CmfCharcoal)
+                                                .border(1.dp, CmfCoolGray.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+                                                .clickable { isChangePinOpen = true }
+                                                .padding(vertical = 12.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = "CHANGE PIN",
+                                                fontSize = 10.sp,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = FontWeight.Bold,
+                                                color = CmfWhite
+                                            )
+                                        }
+
+                                        // Manage Hidden Apps Checklist
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(CmfCharcoal)
+                                                .border(1.dp, CmfCoolGray.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+                                                .clickable { isManageHiddenAppsOpen = true }
+                                                .padding(vertical = 12.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = "MANAGE APPS",
+                                                fontSize = 10.sp,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontWeight = FontWeight.Bold,
+                                                color = CmfWhite
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 5. Theme & Wallpaper Selector
+                            item {
+                                Column {
+                                    Text(
+                                        text = "SELECT CMF WALLPAPER",
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = CmfCoolGray,
+                                        letterSpacing = 1.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        listOf("CARBON MATRIX", "MATTE SLATE", "VAPOR GLOW").forEachIndexed { index, name ->
+                                            val isSelected = selectedWallpaper == index
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .background(if (isSelected) CmfWhite else CmfCharcoal)
+                                                    .border(
+                                                        1.dp,
+                                                        if (isSelected) CmfWhite else CmfCoolGray.copy(alpha = 0.3f),
+                                                        RoundedCornerShape(12.dp)
+                                                    )
+                                                    .clickable { viewModel.setSelectedWallpaper(index) }
+                                                    .padding(vertical = 12.dp, horizontal = 4.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = name,
+                                                    fontSize = 9.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (isSelected) CmfBlack else CmfWhite,
+                                                    textAlign = TextAlign.Center
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 6. Premium Performance core dashboard section
+                            item {
+                                Column {
+                                    Text(
+                                        text = "CORE PERFORMANCE ENGINE",
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        color = CmfCoolGray,
+                                        letterSpacing = 1.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Card(
+                                        colors = CardDefaults.cardColors(containerColor = CmfCharcoal.copy(alpha = 0.8f)),
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .border(1.dp, CmfWhite.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+                                    ) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(16.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text(
+                                                    text = "ACTIVE REFRESH RATE",
+                                                    fontSize = 10.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    color = CmfCoolGray
+                                                )
+                                                Text(
+                                                    text = "$fpsValue FPS",
+                                                    fontSize = 10.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (fpsValue >= 118) CmfOrange else CmfRed
+                                                )
+                                            }
+
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text(
+                                                    text = "FRAME DELAY (AVG)",
+                                                    fontSize = 10.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    color = CmfCoolGray
+                                                )
+                                                Text(
+                                                    text = String.format(Locale.getDefault(), "%.1f ms", 1000f / fpsValue),
+                                                    fontSize = 10.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = CmfWhite
+                                                )
+                                            }
+
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text(
+                                                    text = "RENDERING CORE",
+                                                    fontSize = 10.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    color = CmfCoolGray
+                                                )
+                                                Text(
+                                                    text = "HW ACCELERATED VULKAN",
+                                                    fontSize = 10.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = CmfWhite
+                                                )
+                                            }
+
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text(
+                                                    text = "ENGINE STATE",
+                                                    fontSize = 10.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    color = CmfCoolGray
+                                                )
+                                                Text(
+                                                    text = "STABLE / 120 FPS NOMINAL",
+                                                    fontSize = 10.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = CmfWhite
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(28.dp))
-
-                        // Premium Performance core dashboard section
-                        Text(
-                            text = "CORE PERFORMANCE ENGINE",
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = CmfCoolGray,
-                            letterSpacing = 1.sp
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = CmfCharcoal.copy(alpha = 0.8f)),
-                            shape = RoundedCornerShape(16.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(1.dp, CmfWhite.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = "ACTIVE REFRESH RATE",
-                                        fontSize = 10.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = CmfCoolGray
-                                    )
-                                    Text(
-                                        text = "$fpsValue FPS",
-                                        fontSize = 10.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (fpsValue >= 118) CmfOrange else CmfRed
-                                    )
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = "FRAME DELAY (AVG)",
-                                        fontSize = 10.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = CmfCoolGray
-                                    )
-                                    Text(
-                                        text = String.format(Locale.getDefault(), "%.1f ms", 1000f / fpsValue),
-                                        fontSize = 10.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontWeight = FontWeight.Bold,
-                                        color = CmfWhite
-                                    )
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = "RENDERING CORE",
-                                        fontSize = 10.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = CmfCoolGray
-                                    )
-                                    Text(
-                                        text = "HW ACCELERATED VULKAN",
-                                        fontSize = 10.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontWeight = FontWeight.Bold,
-                                        color = CmfWhite
-                                    )
-                                }
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = "ENGINE STATE",
-                                        fontSize = 10.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = CmfCoolGray
-                                    )
-                                    Text(
-                                        text = "STABLE / 120 FPS NOMINAL",
-                                        fontSize = 10.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontWeight = FontWeight.Bold,
-                                        color = CmfWhite
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(24.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
 
                         // Actions buttons: APPLY & RESET
                         Row(
@@ -1176,8 +1883,7 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
                                     .background(CmfWhite.copy(alpha = 0.1f))
                                     .border(1.dp, CmfWhite.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
                                     .clickable {
-                                        viewModel.setDrawerTransparency(0.45f)
-                                        viewModel.setSelectedWallpaper(0)
+                                        viewModel.resetSettings()
                                         isSettingsOpen = false
                                     }
                                     .testTag("reset_settings_button"),
@@ -1189,6 +1895,255 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
                                     fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.Bold,
                                     color = CmfWhite
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 1. MANAGE HIDDEN APPS OVERLAY DIALOG
+            if (isManageHiddenAppsOpen) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.95f))
+                        .clickable { isManageHiddenAppsOpen = false },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth(0.9f)
+                            .fillMaxHeight(0.8f)
+                            .border(1.2.dp, CmfWhite.copy(alpha = 0.15f), RoundedCornerShape(24.dp))
+                            .clickable(enabled = false) {},
+                        colors = CardDefaults.cardColors(containerColor = CmfDarkGray),
+                        shape = RoundedCornerShape(24.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(24.dp)
+                        ) {
+                            Text(
+                                text = "SELECT APPS TO HIDE",
+                                fontSize = 14.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                color = CmfWhite
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            
+                            LazyColumn(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                items(apps) { app ->
+                                    val isHidden = hiddenApps.contains(app.packageName)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(if (isHidden) CmfWhite.copy(alpha = 0.08f) else Color.Transparent)
+                                            .clickable {
+                                                if (isHidden) {
+                                                    viewModel.unhideApp(app.packageName)
+                                                } else {
+                                                    viewModel.hideApp(app.packageName)
+                                                }
+                                            }
+                                            .padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .clip(CircleShape)
+                                                .background(CmfCharcoal),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (app.icon != null) {
+                                                AndroidIconWrapper(drawable = app.icon, modifier = Modifier.size(24.dp))
+                                            } else {
+                                                Text(
+                                                    text = app.label.take(1).uppercase(),
+                                                    color = CmfWhite,
+                                                    fontSize = 14.sp,
+                                                    fontFamily = FontFamily.Monospace
+                                                )
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(16.dp))
+                                        Text(
+                                            text = app.label,
+                                            color = CmfWhite,
+                                            fontSize = 13.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Checkbox(
+                                            checked = isHidden,
+                                            onCheckedChange = null, // Handled by row clickable
+                                            colors = CheckboxDefaults.colors(
+                                                checkedColor = CmfOrange,
+                                                uncheckedColor = CmfCoolGray
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                            
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(CmfWhite)
+                                    .clickable { isManageHiddenAppsOpen = false },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "DONE",
+                                    color = CmfBlack,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. CHANGE PIN OVERLAY DIALOG
+            if (isChangePinOpen) {
+                var newPinInput by remember { mutableStateOf("") }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.95f))
+                        .clickable { isChangePinOpen = false },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth(0.85f)
+                            .border(1.2.dp, CmfWhite.copy(alpha = 0.15f), RoundedCornerShape(24.dp))
+                            .clickable(enabled = false) {},
+                        colors = CardDefaults.cardColors(containerColor = CmfDarkGray),
+                        shape = RoundedCornerShape(24.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "SET SECURE SPACE PIN",
+                                fontSize = 14.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                color = CmfWhite
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            
+                            Text(
+                                text = "CURRENT PIN: $hiddenSpacePin",
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = CmfCoolGray
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            
+                            // Keypad input visual feedback
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color.Black.copy(alpha = 0.4f))
+                                    .border(1.dp, CmfWhite.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                                    .padding(horizontal = 16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    text = newPinInput.ifEmpty { "ENTER 4 DIGITS..." },
+                                    color = if (newPinInput.isEmpty()) CmfCoolGray else CmfWhite,
+                                    fontSize = 14.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    letterSpacing = 2.sp
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(20.dp))
+                            
+                            // 3x4 custom numeric pad
+                            val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "OK")
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                keys.chunked(3).forEach { row ->
+                                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        row.forEach { key ->
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(54.dp)
+                                                    .clip(CircleShape)
+                                                    .background(CmfCharcoal)
+                                                    .border(1.dp, CmfWhite.copy(alpha = 0.1f), CircleShape)
+                                                    .clickable {
+                                                        when (key) {
+                                                            "C" -> {
+                                                                newPinInput = ""
+                                                            }
+                                                            "OK" -> {
+                                                                if (newPinInput.length == 4) {
+                                                                    viewModel.setHiddenSpacePin(newPinInput)
+                                                                    isChangePinOpen = false
+                                                                }
+                                                            }
+                                                            else -> {
+                                                                if (newPinInput.length < 4) {
+                                                                    newPinInput += key
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = key,
+                                                    color = if (key == "OK") CmfOrange else CmfWhite,
+                                                    fontSize = 15.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            Spacer(modifier = Modifier.height(20.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(CmfWhite.copy(alpha = 0.1f))
+                                    .border(1.dp, CmfWhite.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                                    .clickable { isChangePinOpen = false },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "CANCEL",
+                                    color = CmfWhite,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp
                                 )
                             }
                         }
@@ -1726,10 +2681,33 @@ fun AppIconItem(
     app: LauncherApp,
     onClick: () -> Unit
 ) {
+    var isClicked by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isClicked) 0.85f else 1.0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        finishedListener = {
+            if (isClicked) {
+                isClicked = false
+                onClick()
+            }
+        },
+        label = "AppPressScale"
+    )
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { isClicked = true }
             .testTag("app_item_${app.packageName}"),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {

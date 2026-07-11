@@ -59,14 +59,111 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _fpsValue = MutableStateFlow(120)
     val fpsValue: StateFlow<Int> = _fpsValue.asStateFlow()
 
-    // Filtered apps for the App Drawer
-    val filteredApps: StateFlow<List<LauncherApp>> = combine(_apps, _searchQuery) { appList, query ->
+    // Real-time adjustable blur strength (0.0f to 1.0f)
+    private val _blurStrength = MutableStateFlow(
+        sharedPrefs.getFloat("blur_strength", 0.5f)
+    )
+    val blurStrength: StateFlow<Float> = _blurStrength.asStateFlow()
+
+    // Drawer animation duration in milliseconds (e.g., 200 for fast, 350 for standard, 500 for slow)
+    private val _drawerAnimationSpeed = MutableStateFlow(
+        sharedPrefs.getInt("drawer_animation_speed", 300)
+    )
+    val drawerAnimationSpeed: StateFlow<Int> = _drawerAnimationSpeed.asStateFlow()
+
+    // Package names of apps hidden by the user
+    private val _hiddenApps = MutableStateFlow<Set<String>>(
+        sharedPrefs.getStringSet("hidden_apps_pkgs", emptySet()) ?: emptySet()
+    )
+    val hiddenApps: StateFlow<Set<String>> = _hiddenApps.asStateFlow()
+
+    // Custom lock/unlock PIN for Hidden Space
+    private val _hiddenSpacePin = MutableStateFlow(
+        sharedPrefs.getString("hidden_space_pin", "1234") ?: "1234"
+    )
+    val hiddenSpacePin: StateFlow<String> = _hiddenSpacePin.asStateFlow()
+
+    // Flag to enable system/device biometric or device lock authentication
+    private val _useDeviceAuth = MutableStateFlow(
+        sharedPrefs.getBoolean("use_device_auth", false)
+    )
+    val useDeviceAuth: StateFlow<Boolean> = _useDeviceAuth.asStateFlow()
+
+    // Lock state of the Hidden Space
+    private val _isHiddenSpaceUnlocked = MutableStateFlow(false)
+    val isHiddenSpaceUnlocked: StateFlow<Boolean> = _isHiddenSpaceUnlocked.asStateFlow()
+
+    // Filtered apps for the App Drawer (hides hidden apps unless specifically searching or viewing hidden space)
+    val filteredApps: StateFlow<List<LauncherApp>> = combine(
+        _apps, _searchQuery, _hiddenApps, _isHiddenSpaceUnlocked
+    ) { appList, query, hidden, unlocked ->
         if (query.isBlank()) {
-            appList
+            appList.filter { !hidden.contains(it.packageName) }
         } else {
-            appList.filter { it.label.contains(query, ignoreCase = true) }
+            // Search matches normal apps; if unlocked, can also match hidden apps
+            val allowedApps = if (unlocked) appList else appList.filter { !hidden.contains(it.packageName) }
+            allowedApps.filter { it.label.contains(query, ignoreCase = true) }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun setBlurStrength(strength: Float) {
+        _blurStrength.value = strength
+        sharedPrefs.edit().putFloat("blur_strength", strength).apply()
+    }
+
+    fun setDrawerAnimationSpeed(speed: Int) {
+        _drawerAnimationSpeed.value = speed
+        sharedPrefs.edit().putInt("drawer_animation_speed", speed).apply()
+    }
+
+    fun hideApp(packageName: String) {
+        val current = _hiddenApps.value.toMutableSet()
+        current.add(packageName)
+        _hiddenApps.value = current
+        sharedPrefs.edit().putStringSet("hidden_apps_pkgs", current).apply()
+    }
+
+    fun unhideApp(packageName: String) {
+        val current = _hiddenApps.value.toMutableSet()
+        current.remove(packageName)
+        _hiddenApps.value = current
+        sharedPrefs.edit().putStringSet("hidden_apps_pkgs", current).apply()
+    }
+
+    fun setHiddenSpacePin(pin: String) {
+        _hiddenSpacePin.value = pin
+        sharedPrefs.edit().putString("hidden_space_pin", pin).apply()
+    }
+
+    fun setUseDeviceAuth(enabled: Boolean) {
+        _useDeviceAuth.value = enabled
+        sharedPrefs.edit().putBoolean("use_device_auth", enabled).apply()
+    }
+
+    fun setHiddenSpaceUnlocked(unlocked: Boolean) {
+        _isHiddenSpaceUnlocked.value = unlocked
+    }
+
+    fun resetSettings() {
+        sharedPrefs.edit()
+            .putFloat("drawer_transparency", 0.35f)
+            .putInt("selected_wallpaper", 0)
+            .putFloat("blur_strength", 0.5f)
+            .putInt("drawer_animation_speed", 300)
+            .putStringSet("hidden_apps_pkgs", emptySet())
+            .putString("hidden_space_pin", "1234")
+            .putBoolean("use_device_auth", false)
+            .apply()
+
+        _drawerTransparency.value = 0.35f
+        _selectedWallpaper.value = 0
+        _blurStrength.value = 0.5f
+        _drawerAnimationSpeed.value = 300
+        _hiddenApps.value = emptySet()
+        _hiddenSpacePin.value = "1234"
+        _useDeviceAuth.value = false
+        _isHiddenSpaceUnlocked.value = false
+    }
 
     init {
         loadApps()
