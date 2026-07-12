@@ -93,6 +93,26 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _isHiddenSpaceUnlocked = MutableStateFlow(false)
     val isHiddenSpaceUnlocked: StateFlow<Boolean> = _isHiddenSpaceUnlocked.asStateFlow()
 
+    private val _showClockWidget = MutableStateFlow(
+        sharedPrefs.getBoolean("show_clock_widget", true)
+    )
+    val showClockWidget: StateFlow<Boolean> = _showClockWidget.asStateFlow()
+
+    private val _clockAlignment = MutableStateFlow(
+        sharedPrefs.getInt("clock_alignment", 0) // 0 = Left/Start, 1 = Center, 2 = Right/End
+    )
+    val clockAlignment: StateFlow<Int> = _clockAlignment.asStateFlow()
+
+    private val _drawerStyle = MutableStateFlow(
+        sharedPrefs.getInt("drawer_style", 0) // 0 = Classic, 1 = Folder Style
+    )
+    val drawerStyle: StateFlow<Int> = _drawerStyle.asStateFlow()
+
+    fun setDrawerStyle(style: Int) {
+        _drawerStyle.value = style
+        sharedPrefs.edit().putInt("drawer_style", style).apply()
+    }
+
     // Filtered apps for the App Drawer (hides hidden apps unless specifically searching or viewing hidden space)
     val filteredApps: StateFlow<List<LauncherApp>> = combine(
         _apps, _searchQuery, _hiddenApps, _isHiddenSpaceUnlocked
@@ -104,7 +124,17 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val allowedApps = if (unlocked) appList else appList.filter { !hidden.contains(it.packageName) }
             allowedApps.filter { it.label.contains(query, ignoreCase = true) }
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    fun setShowClockWidget(visible: Boolean) {
+        _showClockWidget.value = visible
+        sharedPrefs.edit().putBoolean("show_clock_widget", visible).apply()
+    }
+
+    fun setClockAlignment(alignIndex: Int) {
+        _clockAlignment.value = alignIndex
+        sharedPrefs.edit().putInt("clock_alignment", alignIndex).apply()
+    }
 
     fun setBlurStrength(strength: Float) {
         _blurStrength.value = strength
@@ -153,6 +183,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             .putStringSet("hidden_apps_pkgs", emptySet())
             .putString("hidden_space_pin", "1234")
             .putBoolean("use_device_auth", false)
+            .putInt("drawer_style", 0)
             .apply()
 
         _drawerTransparency.value = 0.35f
@@ -163,6 +194,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         _hiddenSpacePin.value = "1234"
         _useDeviceAuth.value = false
         _isHiddenSpaceUnlocked.value = false
+        _drawerStyle.value = 0
     }
 
     init {
@@ -297,15 +329,17 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     null
                 }
 
-                    // Categorize for larger app folders
-                    val category = when {
-                        packageName.contains("google", ignoreCase = true) -> "Google"
-                        packageName.contains("android", ignoreCase = true) || packageName.contains("system", ignoreCase = true) -> "System"
-                        packageName.contains("chrome", ignoreCase = true) || packageName.contains("browser", ignoreCase = true) -> "Tools"
-                        packageName.contains("camera", ignoreCase = true) || packageName.contains("gallery", ignoreCase = true) || packageName.contains("media", ignoreCase = true) -> "Media"
-                        else -> "Apps"
-                    }
+                // Categorize for larger app folders
+                val category = when {
+                    packageName.contains("google", ignoreCase = true) -> "Google"
+                    packageName.contains("android", ignoreCase = true) || packageName.contains("system", ignoreCase = true) -> "System"
+                    packageName.contains("chrome", ignoreCase = true) || packageName.contains("browser", ignoreCase = true) -> "Tools"
+                    packageName.contains("camera", ignoreCase = true) || packageName.contains("gallery", ignoreCase = true) || packageName.contains("media", ignoreCase = true) -> "Media"
+                    else -> "Apps"
+                }
 
+                // Exclude the launcher itself so it doesn't show as a normal icon (Task 2)
+                if (packageName != context.packageName) {
                     list.add(
                         LauncherApp(
                             label = label,
@@ -317,42 +351,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         )
                     )
                 }
+            }
         } catch (e: Exception) {
             e.printStackTrace()
-        }
-
-        // 2. Supplement with high-quality mock apps if none exist (such as on blank dev systems),
-        // ensuring an instantly functional, gorgeous showcase Nothing OS launcher setup.
-        val defaultApps = listOf(
-            Triple("Phone", "com.android.dialer", "Tools"),
-            Triple("Messages", "com.android.messaging", "Social"),
-            Triple("Browser", "com.android.chrome", "Tools"),
-            Triple("Camera", "com.android.camera", "Media"),
-            Triple("Settings", "com.android.settings", "System"),
-            Triple("Nothing Center", "com.nothing.settings", "System"),
-            Triple("Weather", "com.nothing.weather", "Tools"),
-            Triple("Nothing Recorder", "com.nothing.recorder", "Media"),
-            Triple("Google Play", "com.android.vending", "Google"),
-            Triple("YouTube", "com.google.android.youtube", "Google"),
-            Triple("Gmail", "com.google.android.gm", "Google"),
-            Triple("Google Maps", "com.google.android.apps.maps", "Google")
-        )
-
-        val installedPackages = list.map { it.packageName }.toSet()
-
-        for (item in defaultApps) {
-            if (!installedPackages.contains(item.second)) {
-                list.add(
-                    LauncherApp(
-                        label = item.first,
-                        packageName = item.second,
-                        className = "",
-                        icon = null,
-                        isMock = true,
-                        category = item.third
-                    )
-                )
-            }
         }
 
         return list.sortedWith(compareBy<LauncherApp> { it.category }.thenBy { it.label.lowercase() })
