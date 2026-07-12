@@ -2,6 +2,7 @@ package com.example
 
 import android.content.Context
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
@@ -261,14 +262,65 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
         val insetsTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
         val insetsBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
+        // SLIDING FROSTED GLASS APP DRAWER WITH ADJUSTABLE REAL-TIME BLUR
+        var drawerDragOffset by remember { mutableStateOf(0f) }
+        var isDrawerOpen by remember { mutableStateOf(false) }
+        var horizontalDragOffset by remember { mutableStateOf(0f) }
+
+        // Use the custom duration animation speed instantly from settings
+        val animatedFraction by animateFloatAsState(
+            targetValue = if (isDrawerOpen) 0f else 1f,
+            animationSpec = tween(
+                durationMillis = animationSpeed,
+                easing = FastOutSlowInEasing
+            ),
+            label = "DrawerSlide"
+        )
+
+        val finalFraction = if (isDrawerOpen) drawerDragOffset else animatedFraction
+        val drawerOffsetY = with(density) { (screenHeight * finalFraction).toPx() }
+
+        // Dynamic Glassmorphic properties with instant adjustable blur strength from 0% to 100%
+        val alphaLevel = transparency // Slider controlled 0% to 100%
+        val glassColor = CmfWhite.copy(alpha = 0.08f + 0.15f * alphaLevel)
+        // Blur calculated using the live settings value instantly
+        val glassBlur = (30.dp * blurStrength)
+
+        // Show Home Screen only when drawer is fully closed or closing
+        val showHomeScreen = !isDrawerOpen && animatedFraction >= 0.99f
+
+        if (isDrawerOpen) {
+            BackHandler {
+                isDrawerOpen = false
+            }
+        }
+
         // HOMEPAGE MAIN CONTENT
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = insetsTop, bottom = 48.dp) // Leave space at bottom for drawer swipe gesture
-                .testTag("homepage_layout"),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
+        if (showHomeScreen) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = insetsTop, bottom = 48.dp) // Leave space at bottom for drawer swipe gesture
+                    .testTag("homepage_layout")
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onDragStart = { drawerDragOffset = 0f },
+                            onDragEnd = {
+                                if (drawerDragOffset < -50f) {
+                                    isDrawerOpen = true
+                                }
+                                drawerDragOffset = 0f
+                            },
+                            onVerticalDrag = { change, dragAmount ->
+                                drawerDragOffset += dragAmount
+                                if (drawerDragOffset < -80f) {
+                                    isDrawerOpen = true
+                                }
+                            }
+                        )
+                    },
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
             // Header: Nothing Dot Matrix Clock & Date and Settings Button
             Row(
                 modifier = Modifier
@@ -629,76 +681,26 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
                 )
             }
         }
+    }
 
-        // SLIDING FROSTED GLASS APP DRAWER WITH ADJUSTABLE REAL-TIME BLUR
-        var drawerDragOffset by remember { mutableStateOf(0f) }
-        var isDrawerOpen by remember { mutableStateOf(false) }
-        var horizontalDragOffset by remember { mutableStateOf(0f) }
-
-        // Use the custom duration animation speed instantly from settings
-        val animatedFraction by animateFloatAsState(
-            targetValue = if (isDrawerOpen) 0f else 1f,
-            animationSpec = tween(
-                durationMillis = animationSpeed,
-                easing = FastOutSlowInEasing
-            ),
-            label = "DrawerSlide"
-        )
-
-        val finalFraction = if (isDrawerOpen) drawerDragOffset else animatedFraction
-        val drawerOffsetY = with(density) { (screenHeight * finalFraction).toPx() }
-
-        // Dynamic Glassmorphic properties with instant adjustable blur strength from 0% to 100%
-        val alphaLevel = transparency // Slider controlled 0% to 100%
-        val glassColor = CmfWhite.copy(alpha = 0.08f + 0.15f * alphaLevel)
-        // Blur calculated using the live settings value instantly
-        val glassBlur = (30.dp * blurStrength)
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                // Capture gestures everywhere to slide drawer up/down seamlessly
-                .pointerInput(Unit) {
-                    detectVerticalDragGestures(
-                        onDragStart = { },
-                        onDragEnd = {
-                            if (drawerDragOffset > 0.15f) {
-                                isDrawerOpen = false
-                            } else if (drawerDragOffset < -0.15f) {
-                                isDrawerOpen = true
-                            }
-                            drawerDragOffset = 0f
-                        },
-                        onVerticalDrag = { change, dragAmount ->
-                            change.consume()
-                            val dragRatio = dragAmount / size.height.toFloat()
-                            val nextValue = if (isDrawerOpen) {
-                                (0f + dragRatio).coerceIn(0f, 1f)
-                            } else {
-                                (1f + dragRatio).coerceIn(0f, 1f)
-                            }
-                            if (isDrawerOpen && nextValue > 0.05f) {
-                                isDrawerOpen = false
-                            } else if (!isDrawerOpen && nextValue < 0.95f) {
-                                isDrawerOpen = true
-                            }
-                        }
-                    )
-                }
-        ) {
-            // App Drawer Body sheet
+        if (!showHomeScreen) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .offset { IntOffset(0, drawerOffsetY.roundToInt()) }
-                    // Apply genuine Glassmorphism real-time Gaussian Blur on S+ devices
-                    .then(
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && glassBlur > 0.dp) {
-                            Modifier.blur(glassBlur)
-                        } else {
-                            Modifier
-                        }
-                    )
+            ) {
+                // App Drawer Body sheet
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .offset { IntOffset(0, drawerOffsetY.roundToInt()) }
+                        // Apply genuine Glassmorphism real-time Gaussian Blur on S+ devices
+                        .then(
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && glassBlur > 0.dp) {
+                                Modifier.blur(glassBlur)
+                            } else {
+                                Modifier
+                            }
+                        )
                     .clip(RoundedCornerShape(topStart = 40.dp, topEnd = 40.dp))
                     .background(
                         brush = Brush.verticalGradient(
@@ -2150,6 +2152,7 @@ fun MainLauncherScreen(viewModel: LauncherViewModel) {
                     }
                 }
             }
+        }
 
             // --- WORKSPACE & APP SHORTCUT POPUPS ---
 
