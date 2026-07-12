@@ -34,7 +34,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private val _apps = MutableStateFlow<List<LauncherApp>>(emptyList())
     val apps: StateFlow<List<LauncherApp>> = _apps.asStateFlow()
 
-    private val _homeGridApps = MutableStateFlow<List<LauncherApp?>>(List(30) { null })
+    private val _homeGridApps = MutableStateFlow<List<LauncherApp?>>(List(150) { null })
     val homeGridApps: StateFlow<List<LauncherApp?>> = _homeGridApps.asStateFlow()
 
     private val _dockApps = MutableStateFlow<List<LauncherApp>>(emptyList())
@@ -48,6 +48,21 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         sharedPrefs.getFloat("drawer_transparency", 0.35f)
     )
     val drawerTransparency: StateFlow<Float> = _drawerTransparency.asStateFlow()
+
+    // Custom wallpaper path from user's gallery
+    private val _customWallpaperPath = MutableStateFlow(
+        sharedPrefs.getString("custom_wallpaper_path", null)
+    )
+    val customWallpaperPath: StateFlow<String?> = _customWallpaperPath.asStateFlow()
+
+    fun setCustomWallpaperPath(path: String?) {
+        _customWallpaperPath.value = path
+        if (path != null) {
+            sharedPrefs.edit().putString("custom_wallpaper_path", path).apply()
+        } else {
+            sharedPrefs.edit().remove("custom_wallpaper_path").apply()
+        }
+    }
 
     // Real-time CMF wallpaper selection (0 = Carbon Matrix, 1 = Matte Slate, 2 = Vapor Glow)
     private val _selectedWallpaper = MutableStateFlow(
@@ -184,6 +199,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             .putString("hidden_space_pin", "1234")
             .putBoolean("use_device_auth", false)
             .putInt("drawer_style", 0)
+            .remove("custom_wallpaper_path")
             .apply()
 
         _drawerTransparency.value = 0.35f
@@ -195,6 +211,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         _useDeviceAuth.value = false
         _isHiddenSpaceUnlocked.value = false
         _drawerStyle.value = 0
+        _customWallpaperPath.value = null
     }
 
     init {
@@ -212,7 +229,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun initializeHomeAndDock(appList: List<LauncherApp>) {
-        val grid = MutableList<LauncherApp?>(30) { null }
+        val grid = MutableList<LauncherApp?>(150) { null }
         val dock = mutableListOf<LauncherApp>()
 
         // 1. Populate Fixed Dock (5 Slots)
@@ -243,7 +260,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
         _dockApps.value = dock
 
-        // 2. Populate 5x6 Home Grid (30 Slots)
+        // 2. Populate 5x6 Home Grid (150 Slots across 5 pages)
         val defaultGridPlacements = mapOf(
             1 to "com.nothing.weather",
             3 to "com.nothing.recorder",
@@ -253,7 +270,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             21 to "com.nothing.settings",
             23 to "com.android.vending"
         )
-        for (i in 0..29) {
+        for (i in 0..149) {
             val savedPkg = sharedPrefs.getString("grid_slot_$i", null)
             if (savedPkg == "empty") {
                 grid[i] = null
@@ -271,7 +288,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun addAppToGrid(slotIndex: Int, app: LauncherApp) {
-        if (slotIndex in 0..29) {
+        if (slotIndex in 0..149) {
             val newList = _homeGridApps.value.toMutableList()
             newList[slotIndex] = app
             _homeGridApps.value = newList
@@ -280,7 +297,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun removeAppFromGrid(slotIndex: Int) {
-        if (slotIndex in 0..29) {
+        if (slotIndex in 0..149) {
             val newList = _homeGridApps.value.toMutableList()
             newList[slotIndex] = null
             _homeGridApps.value = newList
@@ -329,13 +346,77 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     null
                 }
 
-                // Categorize for larger app folders
+                // Categorize apps intelligently (Priority 6)
+                val lowerPkg = packageName.lowercase()
+                val lowerLabel = label.lowercase()
                 val category = when {
-                    packageName.contains("google", ignoreCase = true) -> "Google"
-                    packageName.contains("android", ignoreCase = true) || packageName.contains("system", ignoreCase = true) -> "System"
-                    packageName.contains("chrome", ignoreCase = true) || packageName.contains("browser", ignoreCase = true) -> "Tools"
-                    packageName.contains("camera", ignoreCase = true) || packageName.contains("gallery", ignoreCase = true) || packageName.contains("media", ignoreCase = true) -> "Media"
-                    else -> "Apps"
+                    // Communication
+                    lowerPkg.contains("phone") || lowerPkg.contains("contacts") || lowerPkg.contains("message") || 
+                    lowerPkg.contains("messaging") || lowerPkg.contains("whatsapp") || lowerPkg.contains("telegram") || 
+                    lowerPkg.contains("signal") || lowerPkg.contains("viber") || lowerPkg.contains("dialer") || 
+                    lowerPkg.contains("sms") || lowerLabel.contains("phone") || lowerLabel.contains("contacts") || 
+                    lowerLabel.contains("messages") || lowerLabel.contains("chat") || lowerLabel.contains("sms") ||
+                    lowerLabel.contains("call") -> "Communication"
+
+                    // Social
+                    lowerPkg.contains("facebook") || lowerPkg.contains("instagram") || lowerPkg.contains("twitter") || 
+                    lowerPkg.contains("snapchat") || lowerPkg.contains("tiktok") || lowerPkg.contains("reddit") || 
+                    lowerPkg.contains("discord") || lowerPkg.contains("pinterest") || lowerPkg.contains("linkedin") || 
+                    lowerLabel.contains("social") || lowerLabel.contains("fb") || lowerLabel.contains("insta") -> "Social"
+
+                    // Utilities
+                    lowerPkg.contains("settings") || lowerPkg.contains("files") || lowerPkg.contains("clock") || 
+                    lowerPkg.contains("calculator") || lowerPkg.contains("weather") || lowerPkg.contains("deskclock") || 
+                    lowerPkg.contains("filemanager") || lowerPkg.contains("download") || lowerPkg.contains("browser") ||
+                    lowerLabel.contains("settings") || lowerLabel.contains("files") || lowerLabel.contains("clock") || 
+                    lowerLabel.contains("calculator") || lowerLabel.contains("weather") || lowerLabel.contains("browser") ||
+                    lowerLabel.contains("manager") -> "Utilities"
+
+                    // Media
+                    lowerPkg.contains("camera") || lowerPkg.contains("gallery") || lowerPkg.contains("vn") || 
+                    lowerPkg.contains("capcut") || lowerPkg.contains("snapseed") || lowerPkg.contains("recorder") || 
+                    lowerPkg.contains("editor") || lowerLabel.contains("camera") || lowerLabel.contains("gallery") || 
+                    lowerLabel.contains("photos") || lowerLabel.contains("recorder") || lowerLabel.contains("editor") ||
+                    lowerLabel.contains("sound") || lowerLabel.contains("voice") -> "Media"
+
+                    // Entertainment
+                    lowerPkg.contains("youtube") || lowerPkg.contains("netflix") || lowerPkg.contains("spotify") || 
+                    lowerPkg.contains("player") || lowerPkg.contains("music") || lowerPkg.contains("video") ||
+                    lowerPkg.contains("twitch") || lowerPkg.contains("prime") || lowerLabel.contains("music") || 
+                    lowerLabel.contains("video") || lowerLabel.contains("tv") || lowerLabel.contains("stream") -> "Entertainment"
+
+                    // Tools
+                    lowerPkg.contains("system") || lowerPkg.contains("android") || lowerPkg.contains("widget") || 
+                    lowerPkg.contains("developer") || lowerPkg.contains("assistant") || lowerPkg.contains("search") || 
+                    lowerLabel.contains("tools") || lowerLabel.contains("search") || lowerLabel.contains("system") || 
+                    lowerLabel.contains("compass") || lowerLabel.contains("scanner") -> "Tools"
+
+                    // Productivity
+                    lowerPkg.contains("calendar") || lowerPkg.contains("drive") || lowerPkg.contains("gmail") || 
+                    lowerPkg.contains("keep") || lowerPkg.contains("translate") || lowerPkg.contains("android.apps") ||
+                    lowerPkg.contains("notes") || lowerPkg.contains("doc") || lowerPkg.contains("sheet") || 
+                    lowerPkg.contains("office") || lowerLabel.contains("calendar") || lowerLabel.contains("mail") ||
+                    lowerLabel.contains("notes") || lowerLabel.contains("translate") || lowerLabel.contains("office") -> "Productivity"
+
+                    // Finance
+                    lowerPkg.contains("wallet") || lowerPkg.contains("pay") || lowerPkg.contains("bank") || 
+                    lowerPkg.contains("paypal") || lowerPkg.contains("finance") || lowerPkg.contains("stock") || 
+                    lowerPkg.contains("cash") || lowerLabel.contains("wallet") || lowerLabel.contains("pay") || 
+                    lowerLabel.contains("bank") || lowerLabel.contains("finance") || lowerLabel.contains("card") -> "Finance"
+
+                    // Shopping
+                    lowerPkg.contains("amazon") || lowerPkg.contains("ebay") || lowerPkg.contains("shop") || 
+                    lowerPkg.contains("store") || lowerPkg.contains("cart") || lowerPkg.contains("checkout") || 
+                    lowerLabel.contains("shop") || lowerLabel.contains("store") || lowerLabel.contains("cart") || 
+                    lowerLabel.contains("amazon") -> "Shopping"
+
+                    // Games
+                    lowerPkg.contains("game") || lowerPkg.contains("playgames") || lowerPkg.contains("pubg") || 
+                    lowerPkg.contains("roblox") || lowerPkg.contains("minecraft") || lowerPkg.contains("solitaire") || 
+                    lowerLabel.contains("game") || lowerLabel.contains("puzzle") || lowerLabel.contains("play") || 
+                    lowerLabel.contains("games") -> "Games"
+
+                    else -> "Tools"
                 }
 
                 // Exclude the launcher itself so it doesn't show as a normal icon (Task 2)
